@@ -1,45 +1,23 @@
-import hkdf from '@panva/hkdf'
-import { jwtDecrypt } from 'jose'
-import {
-  HKDF_INFO_PREFIX,
-  HKDF_KEY_LENGTH,
-  JWE_CLOCK_TOLERANCE_SEC,
-} from './constants.js'
+import { decode } from '@auth/core/jwt'
 import { normalizePlatformRole } from './jwt.js'
 import type { CookiePayload } from './types.js'
 
 export interface DecryptSessionCookieOptions {
-  /** Clock skew tolerance in seconds. Defaults to {@link JWE_CLOCK_TOLERANCE_SEC}. */
-  clockToleranceSec?: number
-}
-
-/**
- * Derive the encryption key Auth.js v5 uses for its session cookie.
- *
- * Mirrors Auth.js' internal HKDF derivation byte-for-byte:
- *   HKDF-SHA256(secret, salt=cookieName, info=`{HKDF_INFO_PREFIX} (${cookieName})`, 64 bytes)
- *
- * Exposed primarily so byte-equivalence tests can construct the same key the
- * decryption path uses; production callers should use `decryptSessionCookie`.
- */
-export async function deriveCookieEncryptionKey(
-  secret: string,
-  cookieName: string,
-): Promise<Uint8Array> {
-  return new Uint8Array(
-    await hkdf(
-      'sha256',
-      secret,
-      cookieName,
-      `${HKDF_INFO_PREFIX} (${cookieName})`,
-      HKDF_KEY_LENGTH,
-    ),
-  )
+  /**
+   * Reserved for future use. Auth.js's `decode()` enforces a 15-second
+   * tolerance internally; we have no current need to override it.
+   */
+  // (no fields yet — kept for API symmetry with future extensions)
+  _?: never
 }
 
 /**
  * Decrypt an Auth.js v5 session cookie value and return the cookie payload
  * (incl. UI hints like `isAdmin` and `subscriptionTier`).
+ *
+ * Delegates to `@auth/core/jwt.decode()` so cfg-auth doesn't have to
+ * track Auth.js' internal HKDF derivation manually. The cross-compat tests
+ * pin the behavior; bumping `@auth/core` is a coordinated upgrade.
  *
  * @param token        the raw cookie value (the JWE compact string)
  * @param secret       AUTH_SECRET — the same value Auth.js used to encrypt
@@ -56,14 +34,13 @@ export async function decryptSessionCookie(
   token: string,
   secret: string,
   cookieName: string,
-  opts: DecryptSessionCookieOptions = {},
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _opts: DecryptSessionCookieOptions = {},
 ): Promise<CookiePayload> {
-  const key = await deriveCookieEncryptionKey(secret, cookieName)
-  const { payload } = await jwtDecrypt(token, key, {
-    clockTolerance: opts.clockToleranceSec ?? JWE_CLOCK_TOLERANCE_SEC,
-    keyManagementAlgorithms: ['dir'],
-    contentEncryptionAlgorithms: ['A256CBC-HS512', 'A256GCM'],
-  })
+  const payload = await decode({ token, secret, salt: cookieName })
+  if (!payload) {
+    throw new Error('CookiePayload: decryption returned null (invalid or expired token)')
+  }
   return normalizeCookiePayload(payload as Record<string, unknown>)
 }
 

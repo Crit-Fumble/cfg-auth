@@ -33,11 +33,10 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
-    "@panva/hkdf": "^1.2.1",
+    "@auth/core": "^0.41.2",
     "jose": "^6.2.2"
   },
   "devDependencies": {
-    "@auth/core": "^0.41.2",
     "@swc/core": "^1.15.33",
     "@swc/jest": "^0.2.37",
     "@types/jest": "^29.5.14",

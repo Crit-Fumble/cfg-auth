@@ -26,6 +26,10 @@ export interface VerifySessionJwtOptions {
  * server needs richer data (subscription tier, account status), it must
  * re-read from the DB. Don't try to stuff hints into Bearer tokens; that's
  * what `CookiePayload` is for.
+ *
+ * Note: this Bearer flow is the "transitional" server-fetch pattern in
+ * core-browser. Long-term, those admin pages migrate to direct DB reads in
+ * core-server and this API can be deprecated. For now (phase 0/1) it stays.
  */
 export async function mintSessionJwt(
   payload: BearerPayloadInput,
