@@ -5,7 +5,8 @@ import {
   HKDF_KEY_LENGTH,
   JWE_CLOCK_TOLERANCE_SEC,
 } from './constants.js'
-import type { SessionPayload } from './types.js'
+import { normalizePlatformRole } from './jwt.js'
+import type { CookiePayload } from './types.js'
 
 export interface DecryptSessionCookieOptions {
   /** Clock skew tolerance in seconds. Defaults to {@link JWE_CLOCK_TOLERANCE_SEC}. */
@@ -37,21 +38,26 @@ export async function deriveCookieEncryptionKey(
 }
 
 /**
- * Decrypt an Auth.js v5 session cookie value and return the session payload.
+ * Decrypt an Auth.js v5 session cookie value and return the cookie payload
+ * (incl. UI hints like `isAdmin` and `subscriptionTier`).
  *
  * @param token        the raw cookie value (the JWE compact string)
  * @param secret       AUTH_SECRET — the same value Auth.js used to encrypt
- * @param cookieName   the name of the cookie this token came from; used as the
- *                     HKDF salt, so it MUST be one of the `COOKIE_NAMES`
+ * @param cookieName   the name of the cookie this token came from; used as
+ *                     the HKDF salt, so it MUST be one of the `COOKIE_NAMES`
  *
- * Throws on signature/algorithm/expiry failure.
+ * Throws on signature / algorithm / expiry failure or missing required claims.
+ *
+ * **Important — the returned UI hint fields (`isAdmin`, `subscriptionTier`)
+ * MUST NOT be trusted for server-side authorization.** See the type-level
+ * docs on `CookiePayload` for why.
  */
 export async function decryptSessionCookie(
   token: string,
   secret: string,
   cookieName: string,
   opts: DecryptSessionCookieOptions = {},
-): Promise<SessionPayload> {
+): Promise<CookiePayload> {
   const key = await deriveCookieEncryptionKey(secret, cookieName)
   const { payload } = await jwtDecrypt(token, key, {
     clockTolerance: opts.clockToleranceSec ?? JWE_CLOCK_TOLERANCE_SEC,
@@ -61,20 +67,16 @@ export async function decryptSessionCookie(
   return normalizeCookiePayload(payload as Record<string, unknown>)
 }
 
-function normalizeCookiePayload(p: Record<string, unknown>): SessionPayload {
+function normalizeCookiePayload(p: Record<string, unknown>): CookiePayload {
   const userId = (p.userId as string | undefined) ?? (p.sub as string | undefined)
   if (!userId) {
-    throw new Error('Session cookie payload missing userId/sub claim')
+    throw new Error('CookiePayload: missing userId/sub claim')
   }
-  const rawRoles = Array.isArray(p.roles) ? (p.roles as unknown[]) : []
-  const roles = rawRoles.map((r) =>
-    typeof r === 'string' ? r : ((r as { slug: string }).slug ?? ''),
-  )
+  const platformRole = normalizePlatformRole(p.platformRole)
   return {
     userId,
-    platformRole: (p.platformRole as string | undefined) ?? 'player',
-    roles,
-    isAdmin: (p.isAdmin as boolean | undefined) ?? false,
+    platformRole,
+    isAdmin: typeof p.isAdmin === 'boolean' ? p.isAdmin : platformRole === 'admin',
     subscriptionTier: (p.subscriptionTier as string | undefined) ?? 'basic',
     iat: (p.iat as number | undefined) ?? 0,
     exp: (p.exp as number | undefined) ?? 0,

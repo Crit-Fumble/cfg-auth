@@ -3,7 +3,7 @@ import {
   DEFAULT_HS256_EXPIRES_IN_SEC,
   HS256_CLOCK_TOLERANCE_SEC,
 } from './constants.js'
-import type { SessionPayload, SessionPayloadInput } from './types.js'
+import type { BearerPayload, BearerPayloadInput, PlatformRole } from './types.js'
 
 export interface MintSessionJwtOptions {
   /** Token lifetime in seconds. Defaults to {@link DEFAULT_HS256_EXPIRES_IN_SEC}. */
@@ -16,20 +16,28 @@ export interface VerifySessionJwtOptions {
 }
 
 /**
- * Mint a short-lived HS256 Bearer JWT carrying a session payload.
+ * Mint a short-lived HS256 Bearer JWT for server-to-server calls.
  *
- * Used by core-browser to authenticate server-to-server calls into core-server
- * (when a server component needs to fetch admin data). The `secret` MUST be the
- * same `AUTH_SECRET` env var that core-server uses to verify.
+ * Used by core-browser to authenticate into core-server admin endpoints. The
+ * `secret` MUST be the same `AUTH_SECRET` env var that core-server uses to
+ * verify.
+ *
+ * The payload is intentionally minimal — only userId + platformRole. If the
+ * server needs richer data (subscription tier, account status), it must
+ * re-read from the DB. Don't try to stuff hints into Bearer tokens; that's
+ * what `CookiePayload` is for.
  */
 export async function mintSessionJwt(
-  payload: SessionPayloadInput,
+  payload: BearerPayloadInput,
   secret: string,
   opts: MintSessionJwtOptions = {},
 ): Promise<string> {
   const expiresInSec = opts.expiresInSec ?? DEFAULT_HS256_EXPIRES_IN_SEC
   const key = new TextEncoder().encode(secret)
-  return await new SignJWT({ ...payload })
+  return await new SignJWT({
+    userId: payload.userId,
+    platformRole: payload.platformRole,
+  })
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setIssuedAt()
     .setExpirationTime(`${expiresInSec}s`)
@@ -37,44 +45,48 @@ export async function mintSessionJwt(
 }
 
 /**
- * Verify an HS256 Bearer JWT and return its session payload. Throws if the
- * signature, algorithm, or expiry checks fail.
+ * Verify an HS256 Bearer JWT and return the minimal Bearer payload.
+ *
+ * Throws if the signature, algorithm, or expiry checks fail. Throws if the
+ * payload is missing `userId` or has an invalid `platformRole`.
+ *
+ * Note: this returns *only* the Bearer fields — even if the input token
+ * carries extra claims (legacy tokens may include `roles`, `isAdmin`, etc.),
+ * they are dropped. To read the full session shape, decrypt the JWE cookie
+ * via `decryptSessionCookie`.
  */
 export async function verifySessionJwt(
   token: string,
   secret: string,
   opts: VerifySessionJwtOptions = {},
-): Promise<SessionPayload> {
+): Promise<BearerPayload> {
   const clockTolerance = opts.clockToleranceSec ?? HS256_CLOCK_TOLERANCE_SEC
   const key = new TextEncoder().encode(secret)
   const { payload } = await jwtVerify(token, key, {
     algorithms: ['HS256'],
     clockTolerance,
   })
-  return normalizeSessionPayload(payload)
+  return normalizeBearerPayload(payload as Record<string, unknown>)
 }
 
-/**
- * Normalize a JWT claims object into our SessionPayload shape, applying the
- * same defaults the existing core-server auth plugin applies (platformRole
- * defaults to 'player', roles to [], etc.).
- */
-function normalizeSessionPayload(p: Record<string, unknown>): SessionPayload {
+function normalizeBearerPayload(p: Record<string, unknown>): BearerPayload {
   const userId = (p.userId as string | undefined) ?? (p.sub as string | undefined)
   if (!userId) {
-    throw new Error('SessionPayload: missing userId/sub claim')
+    throw new Error('BearerPayload: missing userId/sub claim')
   }
-  const rawRoles = Array.isArray(p.roles) ? (p.roles as unknown[]) : []
-  const roles = rawRoles.map((r) =>
-    typeof r === 'string' ? r : ((r as { slug: string }).slug ?? ''),
-  )
   return {
     userId,
-    platformRole: (p.platformRole as string | undefined) ?? 'player',
-    roles,
-    isAdmin: (p.isAdmin as boolean | undefined) ?? false,
-    subscriptionTier: (p.subscriptionTier as string | undefined) ?? 'basic',
+    platformRole: normalizePlatformRole(p.platformRole),
     iat: (p.iat as number | undefined) ?? 0,
     exp: (p.exp as number | undefined) ?? 0,
   }
+}
+
+/**
+ * Coerce an arbitrary claim value into the narrow PlatformRole union. Defaults
+ * to 'player' for missing/unknown values, matching the long-standing default
+ * in core-server's auth plugin.
+ */
+export function normalizePlatformRole(raw: unknown): PlatformRole {
+  return raw === 'admin' ? 'admin' : 'player'
 }

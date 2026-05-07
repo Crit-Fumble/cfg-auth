@@ -21,8 +21,7 @@ describe('decryptSessionCookie', () => {
         const token = await encode({
           token: {
             userId: 'user-123',
-            platformRole: 'gm',
-            roles: ['gm', 'player'],
+            platformRole: 'admin',
             isAdmin: true,
             subscriptionTier: 'patron',
           },
@@ -34,13 +33,41 @@ describe('decryptSessionCookie', () => {
         const payload = await decryptSessionCookie(token, SECRET, cookieName)
 
         expect(payload.userId).toBe('user-123')
-        expect(payload.platformRole).toBe('gm')
-        expect(payload.roles).toEqual(['gm', 'player'])
+        expect(payload.platformRole).toBe('admin')
         expect(payload.isAdmin).toBe(true)
         expect(payload.subscriptionTier).toBe('patron')
         expect(payload.exp).toBeGreaterThan(payload.iat)
       })
     }
+
+    it('drops legacy `roles` claim from the returned payload', async () => {
+      const cookieName = COOKIE_NAMES[0]
+      const token = await encode({
+        token: {
+          userId: 'user-789',
+          platformRole: 'player',
+          // legacy claim — must not surface in cfg-auth's return type
+          roles: [{ slug: 'player' }],
+        },
+        secret: SECRET,
+        salt: cookieName,
+      })
+      const payload = await decryptSessionCookie(token, SECRET, cookieName)
+      expect((payload as Record<string, unknown>).roles).toBeUndefined()
+    })
+
+    it('coerces unknown platformRole to "player" and derives isAdmin', async () => {
+      const cookieName = COOKIE_NAMES[0]
+      const token = await encode({
+        token: { userId: 'user-x', platformRole: 'spectator' }, // not in narrow union
+        secret: SECRET,
+        salt: cookieName,
+      })
+      const payload = await decryptSessionCookie(token, SECRET, cookieName)
+      expect(payload.platformRole).toBe('player')
+      expect(payload.isAdmin).toBe(false) // derived from coerced platformRole
+      expect(payload.subscriptionTier).toBe('basic') // default
+    })
   })
 
   describe('roundtrip via direct jose+hkdf (matches the old core-server decrypt path)', () => {
@@ -50,10 +77,9 @@ describe('decryptSessionCookie', () => {
       const now = Math.floor(Date.now() / 1000)
       const token = await new EncryptJWT({
         userId: 'user-789',
-        platformRole: 'player',
-        roles: ['player'],
-        isAdmin: false,
-        subscriptionTier: 'basic',
+        platformRole: 'admin',
+        isAdmin: true,
+        subscriptionTier: 'pro',
       })
         .setProtectedHeader({ alg: 'dir', enc: 'A256CBC-HS512' })
         .setIssuedAt(now)
@@ -62,7 +88,9 @@ describe('decryptSessionCookie', () => {
 
       const payload = await decryptSessionCookie(token, SECRET, cookieName)
       expect(payload.userId).toBe('user-789')
-      expect(payload.platformRole).toBe('player')
+      expect(payload.platformRole).toBe('admin')
+      expect(payload.isAdmin).toBe(true)
+      expect(payload.subscriptionTier).toBe('pro')
     })
   })
 

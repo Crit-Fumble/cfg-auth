@@ -1,4 +1,10 @@
-export type { SessionPayload, SessionPayloadInput } from './types.js'
+export type {
+  PlatformRole,
+  BearerPayload,
+  BearerPayloadInput,
+  CookiePayload,
+  SessionPayload,
+} from './types.js'
 export {
   COOKIE_NAMES,
   HS256_CLOCK_TOLERANCE_SEC,
@@ -11,6 +17,7 @@ export {
 export {
   mintSessionJwt,
   verifySessionJwt,
+  normalizePlatformRole,
   type MintSessionJwtOptions,
   type VerifySessionJwtOptions,
 } from './jwt.js'
