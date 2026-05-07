@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# Test artefacts
+coverage/
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Husky internals (auto-managed)
+.husky/_
+
+# Local env
+.env
+.env.local
+.env.*.local
