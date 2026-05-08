@@ -60,6 +60,10 @@ npm run typecheck
 npm run build      # emit dist/
 ```
 
+The library reads no `process.env` itself — consuming apps own the env-var
+plumbing. See [`.env.example`](.env.example) for the values you may want at
+install/test time (`NODE_AUTH_TOKEN`, `AUTH_SECRET`).
+
 ## License
 
 AGPL-3.0-only. See [LICENSE](LICENSE), [NOTICE](NOTICE), and [TRADEMARK.md](TRADEMARK.md).
